@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:;" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>德州扑克单机版</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"><span>♠</span></div>
+          <div>
+            <h1>德州扑克</h1>
+            <p>OFFLINE TABLE</p>
+          </div>
+        </div>
+
+        <div class="session-strip" aria-label="牌局信息">
+          <div class="session-item">
+            <span>牌局</span>
+            <strong id="hand-number">#1</strong>
+          </div>
+          <div class="session-divider"></div>
+          <div class="session-item">
+            <span>盲注</span>
+            <strong id="blind-level">10 / 20</strong>
+          </div>
+          <div class="session-divider"></div>
+          <div class="session-item highlight">
+            <span>你的战绩</span>
+            <strong id="session-profit">±0</strong>
+          </div>
+        </div>
+
+        <div class="top-actions">
+          <button class="icon-button" id="help-button" title="玩法说明" aria-label="玩法说明">?</button>
+          <button class="icon-button" id="sound-button" title="切换音效" aria-label="切换音效">♪</button>
+          <button class="icon-button" id="settings-button" title="设置" aria-label="设置">⚙</button>
+        </div>
+      </header>
+
+      <main class="game-layout">
+        <section class="table-column">
+          <div class="felt-stage">
+            <div class="ambient-light"></div>
+            <div class="poker-table" id="poker-table">
+              <div class="rail-line"></div>
+
+              <article class="player-seat seat-top" id="seat-2" data-player="2"></article>
+              <article class="player-seat seat-left" id="seat-1" data-player="1"></article>
+              <article class="player-seat seat-right" id="seat-3" data-player="3"></article>
+              <article class="player-seat seat-bottom" id="seat-0" data-player="0"></article>
+
+              <div class="table-center">
+                <div class="phase-label" id="phase-label">翻牌前</div>
+                <div class="community-cards" id="community-cards" aria-label="公共牌"></div>
+                <div class="pot-display">
+                  <span class="chip-stack mini" aria-hidden="true"></span>
+                  <span>底池</span>
+                  <strong id="pot-amount">0</strong>
+                </div>
+              </div>
+
+              <div class="table-watermark" aria-hidden="true">
+                <span>♠</span>
+                <b>ROYAL ROOM</b>
+              </div>
+            </div>
+          </div>
+
+          <section class="action-panel" id="action-panel">
+            <div class="turn-summary">
+              <div class="turn-dot"></div>
+              <div>
+                <strong id="turn-title">正在发牌…</strong>
+                <span id="turn-detail">请稍候</span>
+              </div>
+            </div>
+
+            <div class="bet-control" id="bet-control">
+              <div class="bet-presets">
+                <button data-bet="third">1/3 池</button>
+                <button data-bet="half">1/2 池</button>
+                <button data-bet="pot">满池</button>
+                <button data-bet="allin">全下</button>
+              </div>
+              <div class="range-row">
+                <input type="range" id="raise-slider" min="20" max="2000" value="40" />
+                <label class="raise-amount">
+                  <span>加注至</span>
+                  <input type="number" id="raise-input" value="40" min="20" />
+                </label>
+              </div>
+            </div>
+
+            <div class="action-buttons">
+              <button class="action secondary danger" id="fold-button">
+                <span>弃牌</span><kbd>F</kbd>
+              </button>
+              <button class="action secondary" id="check-call-button">
+                <span id="check-call-label">过牌</span><kbd>C</kbd>
+              </button>
+              <button class="action primary" id="raise-button">
+                <span id="raise-label">加注至 40</span><kbd>R</kbd>
+              </button>
+            </div>
+          </section>
+        </section>
+
+        <aside class="side-panel">
+          <div class="side-tabs" role="tablist">
+            <button class="side-tab active" data-tab="history">牌局记录</button>
+            <button class="side-tab" data-tab="stats">数据统计</button>
+          </div>
+
+          <div class="side-content active" id="history-content">
+            <div class="history-list" id="history-list"></div>
+          </div>
+
+          <div class="side-content" id="stats-content">
+            <div class="stats-grid">
+              <div class="stat-card"><span>已玩手数</span><strong id="stat-hands">0</strong></div>
+              <div class="stat-card"><span>胜利手数</span><strong id="stat-wins">0</strong></div>
+              <div class="stat-card"><span>胜率</span><strong id="stat-rate">0%</strong></div>
+              <div class="stat-card"><span>最大底池</span><strong id="stat-pot">0</strong></div>
+            </div>
+            <div class="style-card">
+              <div class="style-heading"><span>你的风格</span><strong id="style-name">观察中</strong></div>
+              <div class="style-meter"><i id="style-meter-fill"></i></div>
+              <p id="style-description">完成几手牌后将生成打法分析。</p>
+            </div>
+          </div>
+
+          <div class="tip-card">
+            <div class="tip-icon">i</div>
+            <div>
+              <strong id="tip-title">牌桌提示</strong>
+              <p id="tip-text">位置越靠后，你掌握的信息越多，可以适当扩大起手牌范围。</p>
+            </div>
+          </div>
+        </aside>
+      </main>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite"></div>
+
+    <div class="modal-backdrop" id="result-modal" aria-hidden="true">
+      <section class="modal result-modal-card" role="dialog" aria-modal="true" aria-labelledby="result-title">
+        <div class="result-emblem" id="result-emblem">♠</div>
+        <p class="eyebrow" id="result-eyebrow">本手结束</p>
+        <h2 id="result-title">你赢得了底池</h2>
+        <p class="result-copy" id="result-copy"></p>
+        <div class="result-winners" id="result-winners"></div>
+        <button class="modal-primary" id="next-hand-button">开始下一手</button>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="settings-modal" aria-hidden="true">
+      <section class="modal settings-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <div class="modal-header">
+          <div><p class="eyebrow">牌桌偏好</p><h2 id="settings-title">游戏设置</h2></div>
+          <button class="close-button" data-close="settings-modal" aria-label="关闭">×</button>
+        </div>
+        <div class="setting-row">
+          <div><strong>电脑思考速度</strong><span>调整电脑玩家行动前的等待时间</span></div>
+          <select id="speed-select">
+            <option value="fast">快速</option>
+            <option value="normal" selected>自然</option>
+            <option value="slow">慢速</option>
+          </select>
+        </div>
+        <div class="setting-row">
+          <div><strong>操作确认</strong><span>全下前进行二次确认</span></div>
+          <label class="switch"><input type="checkbox" id="confirm-allin" checked /><i></i></label>
+        </div>
+        <div class="setting-row">
+          <div><strong>音效</strong><span>发牌、筹码和胜负提示音</span></div>
+          <label class="switch"><input type="checkbox" id="sound-toggle" checked /><i></i></label>
+        </div>
+        <button class="modal-secondary" id="restart-button">重新开始整局</button>
+        <p class="version-line" id="version-line">德州扑克单机版</p>
+      </section>
+    </div>
+
+    <div class="modal-backdrop" id="help-modal" aria-hidden="true">
+      <section class="modal help-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+        <div class="modal-header">
+          <div><p class="eyebrow">快速入门</p><h2 id="help-title">怎么玩德州扑克</h2></div>
+          <button class="close-button" data-close="help-modal" aria-label="关闭">×</button>
+        </div>
+        <div class="help-flow">
+          <div><b>01</b><strong>两张底牌</strong><span>每人获得两张只有自己可见的牌。</span></div>
+          <div><b>02</b><strong>五张公共牌</strong><span>依次发出翻牌、转牌和河牌。</span></div>
+          <div><b>03</b><strong>组成最佳五张</strong><span>从七张牌中选出牌力最强的五张。</span></div>
+          <div><b>04</b><strong>赢得筹码</strong><span>让其他人弃牌，或在摊牌时胜出。</span></div>
+        </div>
+        <div class="hand-ranking">
+          <strong>牌型大小</strong>
+          <p>皇家同花顺 ＞ 同花顺 ＞ 四条 ＞ 葫芦 ＞ 同花 ＞ 顺子 ＞ 三条 ＞ 两对 ＞ 一对 ＞ 高牌</p>
+        </div>
+        <button class="modal-primary" data-close="help-modal">明白了，开始游戏</button>
+      </section>
+    </div>
+
+    <script src="src/poker-engine.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

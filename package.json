@@ -1,0 +1,86 @@
+{
+  "name": "texas-holdem-offline",
+  "version": "1.0.0",
+  "description": "中文单机版德州扑克桌面游戏",
+  "main": "main.js",
+  "author": "Promise",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "test": "node tests/poker.test.js",
+    "pack": "electron-builder --dir",
+    "dist:mac": "electron-builder --mac dmg --arm64",
+    "dist:win": "electron-builder --win nsis --x64",
+    "dist": "npm run dist:mac && npm run dist:win"
+  },
+  "devDependencies": {
+    "electron": "28.3.3",
+    "electron-builder": "24.13.3"
+  },
+  "build": {
+    "appId": "com.promise.texasholdem.offline",
+    "productName": "德州扑克单机版",
+    "asar": true,
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "styles.css",
+      "renderer.js",
+      "src/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "artifactName": "Texas-Holdem-Offline-${version}-${os}-${arch}.${ext}",
+    "mac": {
+      "category": "public.app-category.games",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "德州扑克单机版"
+    },
+    "dmg": {
+      "title": "德州扑克单机版",
+      "window": {
+        "width": 600,
+        "height": 420
+      },
+      "contents": [
+        {
+          "x": 170,
+          "y": 210,
+          "type": "file"
+        },
+        {
+          "x": 430,
+          "y": 210,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  }
+}
