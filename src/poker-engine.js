@@ -202,7 +202,11 @@
     levels.forEach((level) => {
       const contributors = players.filter((player) => player.totalBet >= level);
       const amount = (level - previous) * contributors.length;
-      const eligible = contributors.filter((player) => !player.folded);
+      // A final tier with one contributor is an uncalled overage and returns
+      // to that player, even if a caller was all-in for a smaller amount.
+      const eligible = contributors.length === 1
+        ? contributors.slice()
+        : contributors.filter((player) => !player.folded);
       if (amount > 0) pots.push({ amount, cap: level, eligible });
       previous = level;
     });
