@@ -46,4 +46,9 @@ assert.deepStrictEqual(sidePots.map((pot) => pot.eligible.length), [3, 2, 1]);
 
 assert(Poker.preflopStrength(hand('As Ah')) > Poker.preflopStrength(hand('7c 2d')));
 
+const comboDraw = Poker.detectDraws(hand('9h 8h 7h 6h Kd'));
+assert.strictEqual(comboDraw.flushDraw, true);
+assert.strictEqual(comboDraw.openEndedStraightDraw, true);
+assert.strictEqual(comboDraw.comboDraw, true);
+
 console.log('✓ 牌组、牌型比较、A2345 顺子、踢脚和边池测试全部通过');

@@ -192,6 +192,37 @@
     return Math.max(0.08, Math.min(0.96, strength));
   }
 
+  function detectDraws(cards) {
+    if (!Array.isArray(cards) || cards.length < 4) {
+      return { flushDraw: false, openEndedStraightDraw: false, gutshotStraightDraw: false, comboDraw: false };
+    }
+
+    const suitCounts = {};
+    cards.forEach((card) => { suitCounts[card.suit] = (suitCounts[card.suit] || 0) + 1; });
+    const flushDraw = Object.values(suitCounts).some((count) => count === 4);
+    const ranks = Array.from(new Set(cards.map((card) => card.rank)));
+    if (ranks.includes(14)) ranks.push(1);
+    const uniqueRanks = Array.from(new Set(ranks)).sort((a, b) => a - b);
+    let openEndedStraightDraw = false;
+    let gutshotStraightDraw = false;
+
+    for (let low = 1; low <= 10; low += 1) {
+      const windowRanks = [low, low + 1, low + 2, low + 3, low + 4];
+      const present = windowRanks.filter((rank) => uniqueRanks.includes(rank));
+      if (present.length !== 4) continue;
+      const missingIndex = windowRanks.findIndex((rank) => !uniqueRanks.includes(rank));
+      if (missingIndex === 0 || missingIndex === 4) openEndedStraightDraw = true;
+      else gutshotStraightDraw = true;
+    }
+
+    return {
+      flushDraw,
+      openEndedStraightDraw,
+      gutshotStraightDraw,
+      comboDraw: flushDraw && (openEndedStraightDraw || gutshotStraightDraw)
+    };
+  }
+
   function buildSidePots(players) {
     const levels = Array.from(
       new Set(players.filter((player) => player.totalBet > 0).map((player) => player.totalBet))
@@ -229,6 +260,7 @@
     evaluateHand,
     compareHands,
     preflopStrength,
+    detectDraws,
     buildSidePots,
     cardText
   };

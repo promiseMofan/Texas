@@ -1,6 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
-const fs = require('fs');
 const windows = new Set();
 
 const createWindow = () => {
@@ -27,17 +26,13 @@ const createWindow = () => {
   window.webContents.on('did-fail-load', (_event, code, description) => {
     console.error('页面加载失败：', code, description);
   });
-  window.webContents.once('did-finish-load', async () => {
-    if (!process.env.QA_CAPTURE_PATH) return;
-    try {
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-      const image = await window.webContents.capturePage();
-      fs.writeFileSync(process.env.QA_CAPTURE_PATH, image.toPNG());
-    } catch (error) {
-      console.error('界面截图失败：', error);
-    }
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('渲染进程退出：', details.reason, details.exitCode);
   });
-  window.on('closed', () => windows.delete(window));
+  window.on('unresponsive', () => console.error('应用窗口暂时无响应'));
+  window.on('closed', () => {
+    windows.delete(window);
+  });
 };
 
 app.whenReady().then(() => {

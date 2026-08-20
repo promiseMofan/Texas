@@ -29,6 +29,11 @@
             <strong id="blind-level">10 / 20</strong>
           </div>
           <div class="session-divider"></div>
+          <div class="session-item">
+            <span>难度</span>
+            <strong id="difficulty-label">一般</strong>
+          </div>
+          <div class="session-divider"></div>
           <div class="session-item highlight">
             <span>你的战绩</span>
             <strong id="session-profit">±0</strong>
@@ -48,6 +53,28 @@
             <div class="ambient-light"></div>
             <div class="poker-table" id="poker-table">
               <div class="rail-line"></div>
+
+              <aside class="dealer-station" id="dealer-station" aria-label="荷官">
+                <div class="dealer-callout" id="dealer-status">荷官已就位</div>
+                <div class="dealer-person" aria-hidden="true">
+                  <div class="dealer-hair"></div>
+                  <div class="dealer-head"><i></i><i></i><span></span></div>
+                  <div class="dealer-neck"></div>
+                  <div class="dealer-torso"><span class="dealer-bow"></span></div>
+                  <div class="dealer-arm left"></div>
+                  <div class="dealer-arm right"></div>
+                </div>
+                <div class="dealer-name"><strong>荷官 · 安</strong><span>DEALER</span></div>
+              </aside>
+
+              <div class="dealer-deck" id="dealer-deck" aria-label="牌堆">
+                <i></i><i></i><i></i><span>牌堆</span>
+              </div>
+              <div class="muck-area" id="muck-area" aria-label="弃牌区">
+                <div class="muck-card-stack" id="muck-card-stack"></div>
+                <span>弃牌区</span>
+              </div>
+              <div class="card-animation-layer" id="card-animation-layer" aria-hidden="true"></div>
 
               <article class="player-seat seat-top" id="seat-2" data-player="2"></article>
               <article class="player-seat seat-left" id="seat-1" data-player="1"></article>
@@ -106,6 +133,9 @@
               <button class="action primary" id="raise-button">
                 <span id="raise-label">加注至 40</span><kbd>R</kbd>
               </button>
+              <button class="action primary review-result" id="show-result-button" hidden>
+                <span>查看本手结算</span><kbd>↵</kbd>
+              </button>
             </div>
           </section>
         </section>
@@ -147,6 +177,37 @@
 
     <div class="toast-region" id="toast-region" aria-live="polite"></div>
 
+    <div class="modal-backdrop" id="difficulty-modal" aria-hidden="true">
+      <section class="modal difficulty-card-modal" role="dialog" aria-modal="true" aria-labelledby="difficulty-title">
+        <div class="difficulty-intro">
+          <div class="result-emblem small">♠</div>
+          <p class="eyebrow">新牌局</p>
+          <h2 id="difficulty-title">选择电脑难度</h2>
+          <p>难度只改变电脑的决策质量，不会让电脑看到你的底牌。</p>
+        </div>
+        <div class="difficulty-options" role="radiogroup" aria-label="电脑难度">
+          <button class="difficulty-option" data-difficulty="easy" role="radio" aria-checked="false">
+            <span class="difficulty-symbol">♣</span>
+            <strong>简单</strong>
+            <small>判断较基础，会出现明显失误，适合熟悉规则。</small>
+          </button>
+          <button class="difficulty-option selected" data-difficulty="normal" role="radio" aria-checked="true">
+            <span class="recommend-badge">推荐</span>
+            <span class="difficulty-symbol">♦</span>
+            <strong>一般</strong>
+            <small>结合胜率、赔率和抽象策略，节奏更接近普通牌局。</small>
+          </button>
+          <button class="difficulty-option" data-difficulty="hard" role="radio" aria-checked="false">
+            <span class="difficulty-symbol">♠</span>
+            <strong>困难</strong>
+            <small>更多胜率模拟与MCCFR策略混合，决策稳定且更难预测。</small>
+          </button>
+        </div>
+        <button class="modal-primary" id="start-game-button">以一般难度开始牌局</button>
+        <p class="difficulty-note">之后可随时在右上角设置中调整。</p>
+      </section>
+    </div>
+
     <div class="modal-backdrop" id="result-modal" aria-hidden="true">
       <section class="modal result-modal-card" role="dialog" aria-modal="true" aria-labelledby="result-title">
         <div class="result-emblem" id="result-emblem">♠</div>
@@ -163,6 +224,14 @@
         <div class="modal-header">
           <div><p class="eyebrow">牌桌偏好</p><h2 id="settings-title">游戏设置</h2></div>
           <button class="close-button" data-close="settings-modal" aria-label="关闭">×</button>
+        </div>
+        <div class="setting-row">
+          <div><strong>电脑难度</strong><span>调整电脑的胜率估计与策略质量</span></div>
+          <select id="difficulty-select">
+            <option value="easy">简单</option>
+            <option value="normal" selected>一般</option>
+            <option value="hard">困难</option>
+          </select>
         </div>
         <div class="setting-row">
           <div><strong>电脑思考速度</strong><span>调整电脑玩家行动前的等待时间</span></div>
@@ -201,11 +270,17 @@
           <strong>牌型大小</strong>
           <p>皇家同花顺 ＞ 同花顺 ＞ 四条 ＞ 葫芦 ＞ 同花 ＞ 顺子 ＞ 三条 ＞ 两对 ＞ 一对 ＞ 高牌</p>
         </div>
+        <div class="hand-ranking ai-note">
+          <strong>电脑难度说明</strong>
+          <p>简单/一般/困难会改变模拟次数、抽象策略权重和混合频率；电脑始终只使用自己看到的牌面信息。</p>
+        </div>
         <button class="modal-primary" data-close="help-modal">明白了，开始游戏</button>
       </section>
     </div>
 
     <script src="src/poker-engine.js"></script>
+    <script src="src/mccfr-policy.js"></script>
+    <script src="src/ai-engine.js"></script>
     <script src="renderer.js"></script>
   </body>
 </html>

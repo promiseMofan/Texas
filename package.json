@@ -7,7 +7,8 @@
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "test": "node tests/poker.test.js",
+    "test": "node tests/poker.test.js && node tests/ai.test.js",
+    "train:ai": "node scripts/train-mccfr.js",
     "pack": "electron-builder --dir",
     "dist:mac": "electron-builder --mac dmg --arm64",
     "dist:win": "electron-builder --win nsis --x64",
@@ -32,6 +33,7 @@
       "styles.css",
       "renderer.js",
       "src/**/*",
+      "scripts/**/*",
       "assets/**/*",
       "package.json"
     ],

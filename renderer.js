@@ -2,10 +2,12 @@
   'use strict';
 
   const Poker = window.PokerEngine;
+  const HoldemAI = window.HoldemAI;
   const STARTING_CHIPS = 2000;
   const PHASES = ['preflop', 'flop', 'turn', 'river'];
   const PHASE_NAMES = {
     idle: '等待开始',
+    dealing: '发牌中',
     preflop: '翻牌前',
     flop: '翻牌',
     turn: '转牌',
@@ -40,9 +42,11 @@
     phase: 'idle',
     currentBet: 0,
     minRaise: 20,
+    streetRaises: 0,
     currentPlayer: null,
     handNumber: 0,
     handComplete: true,
+    resultReady: false,
     revealCards: false,
     winnerIds: [],
     awards: {},
@@ -50,6 +54,7 @@
     raiseTarget: null,
     handToken: 0,
     turnToken: 0,
+    animating: false,
     sessionStart: STARTING_CHIPS,
     sessionOver: false,
     settings: loadSettings(),
@@ -58,17 +63,19 @@
 
   function cacheDom() {
     const ids = [
-      'hand-number', 'blind-level', 'session-profit', 'phase-label', 'community-cards',
+      'hand-number', 'blind-level', 'difficulty-label', 'session-profit', 'phase-label', 'community-cards',
       'pot-amount', 'action-panel', 'turn-title', 'turn-detail', 'bet-control',
       'raise-slider', 'raise-input', 'fold-button', 'check-call-button',
       'check-call-label', 'raise-button', 'raise-label', 'history-list',
       'stat-hands', 'stat-wins', 'stat-rate', 'stat-pot', 'style-name',
       'style-meter-fill', 'style-description', 'tip-title', 'tip-text',
       'result-modal', 'result-emblem', 'result-eyebrow', 'result-title',
-      'result-copy', 'result-winners', 'next-hand-button', 'settings-modal',
+      'result-copy', 'result-winners', 'next-hand-button', 'difficulty-modal', 'settings-modal',
       'help-modal', 'settings-button', 'help-button', 'sound-button',
-      'speed-select', 'confirm-allin', 'sound-toggle', 'restart-button',
-      'version-line', 'toast-region'
+      'difficulty-select', 'speed-select', 'confirm-allin', 'sound-toggle', 'restart-button',
+      'start-game-button', 'version-line', 'toast-region', 'poker-table', 'dealer-station',
+      'dealer-status', 'dealer-deck', 'muck-area', 'muck-card-stack', 'card-animation-layer',
+      'show-result-button'
     ];
     ids.forEach((id) => { dom[id] = document.getElementById(id); });
     for (let index = 0; index < 4; index += 1) {
@@ -80,12 +87,13 @@
     try {
       const stored = JSON.parse(localStorage.getItem('holdem-settings') || '{}');
       return {
+        difficulty: ['easy', 'normal', 'hard'].includes(stored.difficulty) ? stored.difficulty : 'normal',
         speed: stored.speed || 'normal',
         confirmAllin: stored.confirmAllin !== false,
         sound: stored.sound !== false
       };
     } catch (error) {
-      return { speed: 'normal', confirmAllin: true, sound: true };
+      return { difficulty: 'normal', speed: 'normal', confirmAllin: true, sound: true };
     }
   }
 
@@ -121,7 +129,8 @@
       totalBet: 0,
       roundBet: 0,
       acted: false,
-      lastAction: ''
+      lastAction: '',
+      visibleCardCount: 0
     }));
   }
 
@@ -136,15 +145,21 @@
     state.bigBlindIndex = -1;
     state.phase = 'idle';
     state.currentBet = 0;
+    state.streetRaises = 0;
     state.currentPlayer = null;
     state.handNumber = 0;
     state.handComplete = true;
+    state.resultReady = false;
+    state.animating = false;
     state.revealCards = false;
     state.winnerIds = [];
     state.awards = {};
     state.lastPot = 0;
     state.sessionStart = STARTING_CHIPS;
     state.sessionOver = false;
+    clearAnimationLayer();
+    clearMuck();
+    setDealerStatus('荷官已就位');
     closeModal('settings-modal');
     closeModal('result-modal');
     clearHistory();
@@ -185,14 +200,17 @@
     ));
   }
 
-  function startHand() {
+  async function startHand() {
     closeModal('result-modal');
     state.handToken += 1;
     state.turnToken += 1;
+    const token = state.handToken;
     state.sessionOver = false;
+    state.animating = true;
 
     const funded = state.players.filter((player) => player.chips > 0);
     if (state.players[0].chips <= 0 || funded.length < 2) {
+      state.animating = false;
       showSessionEnd();
       return;
     }
@@ -201,10 +219,12 @@
     updateBlindLevel();
     state.deck = Poker.shuffle(Poker.createDeck());
     state.community = [];
-    state.phase = 'preflop';
+    state.phase = 'dealing';
     state.currentBet = 0;
+    state.streetRaises = 0;
     state.currentPlayer = null;
     state.handComplete = false;
+    state.resultReady = false;
     state.revealCards = false;
     state.winnerIds = [];
     state.awards = {};
@@ -220,6 +240,7 @@
       player.roundBet = 0;
       player.acted = false;
       player.lastAction = player.inHand ? '' : '出局';
+      player.visibleCardCount = 0;
     });
 
     state.dealer = nextInHand(state.dealer);
@@ -232,7 +253,8 @@
       state.bigBlindIndex = nextInHand(state.smallBlindIndex);
     }
 
-    dealHoleCards();
+    clearAnimationLayer();
+    clearMuck();
     postBlind(state.smallBlindIndex, state.smallBlind, '小盲');
     postBlind(state.bigBlindIndex, state.bigBlind, '大盲');
     state.currentBet = Math.max(
@@ -246,28 +268,51 @@
       '，' + state.players[state.bigBlindIndex].name + ' 下大盲 ' + state.players[state.bigBlindIndex].roundBet,
       'action'
     );
-    addLog('你的底牌：' + state.players[0].hand.map(Poker.cardText).join(' '), 'action');
     rotateTip();
     render();
-    playSound('deal');
+    setDealerStatus('洗牌中…', 'speaking');
+    await wait(360);
+    if (token !== state.handToken) return;
+
+    setDealerStatus('盲注已下，开始发牌', 'speaking');
+    await wait(240);
+    if (token !== state.handToken) return;
+
+    const dealt = await dealHoleCards(token);
+    if (!dealt || token !== state.handToken) return;
+
+    state.phase = 'preflop';
+    state.animating = false;
+    addLog('你的底牌：' + state.players[0].hand.map(Poker.cardText).join(' '), 'action');
+    setDealerStatus('翻牌前，请行动');
+    render();
 
     const first = nextPending(state.bigBlindIndex);
     if (first === -1) {
-      runoutBoard(state.handToken);
+      await runoutBoard(token);
     } else {
       setCurrentPlayer(first);
     }
   }
 
-  function dealHoleCards() {
+  async function dealHoleCards(token) {
     const count = state.players.filter((player) => player.inHand).length;
     for (let round = 0; round < 2; round += 1) {
+      setDealerStatus('发第 ' + (round + 1) + ' 轮底牌', 'speaking');
       let index = state.smallBlindIndex;
       for (let dealt = 0; dealt < count; dealt += 1) {
-        state.players[index].hand.push(state.deck.pop());
+        if (token !== state.handToken) return false;
+        const player = state.players[index];
+        const card = state.deck.pop();
+        player.hand.push(card);
+        await animateCardToSeat(player, player.hand.length - 1, token);
+        if (token !== state.handToken) return false;
+        playSound('deal');
+        await wait(45);
         index = nextInHand(index);
       }
     }
+    return token === state.handToken;
   }
 
   function postBlind(index, amount, label) {
@@ -299,10 +344,11 @@
   }
 
   function setCurrentPlayer(index) {
-    if (index < 0 || state.handComplete) return;
+    if (index < 0 || state.handComplete || state.animating) return;
     state.currentPlayer = index;
     state.raiseTarget = null;
     state.turnToken += 1;
+    setDealerStatus(state.players[index].isHuman ? '轮到你，请行动' : state.players[index].name + ' 思考中');
     render();
     if (!state.players[index].isHuman) runBotTurn(index, state.handToken, state.turnToken);
   }
@@ -313,22 +359,10 @@
     await wait(delay + Math.floor(Math.random() * delay * 0.45));
     if (
       handToken !== state.handToken || turnToken !== state.turnToken ||
-      state.currentPlayer !== index || state.handComplete
+      state.currentPlayer !== index || state.handComplete || state.animating
     ) return;
     const decision = chooseBotAction(state.players[index]);
     performAction(decision.type, decision.amount);
-  }
-
-  function estimateBotStrength(player) {
-    let strength;
-    if (state.phase === 'preflop') {
-      strength = Poker.preflopStrength(player.hand);
-    } else {
-      const score = Poker.evaluateHand(player.hand.concat(state.community));
-      const bases = [0.14, 0.35, 0.56, 0.68, 0.76, 0.82, 0.9, 0.97, 1];
-      strength = bases[score.category] + (score.kickers[0] || 0) / 200;
-    }
-    return Math.max(0.03, Math.min(1, strength));
   }
 
   function legalRaiseRange(player) {
@@ -341,49 +375,35 @@
   }
 
   function chooseBotAction(player) {
-    const profile = BOT_PROFILES[player.id];
     const callAmount = Math.max(0, state.currentBet - player.roundBet);
     const pot = Math.max(state.bigBlind, potAmount());
-    const pressure = callAmount / Math.max(1, pot + callAmount);
-    let strength = estimateBotStrength(player);
-    strength += (Math.random() - 0.5) * 0.16;
-    if (Math.random() < profile.bluff) strength += 0.32;
     const range = legalRaiseRange(player);
-
-    if (callAmount === 0) {
-      const betChance = 0.08 + strength * profile.aggression * 0.75;
-      if (range.canRaise && strength > 0.34 && Math.random() < betChance) {
-        const desired = state.currentBet + Math.max(
-          state.minRaise,
-          Math.round(pot * (0.3 + profile.aggression * 0.45) / 5) * 5
-        );
-        return { type: 'raise', amount: clamp(desired, range.min, range.max) };
-      }
-      return { type: 'check' };
-    }
-
-    const stackPressure = callAmount / Math.max(1, player.chips);
-    if (
-      range.canRaise && strength > 0.7 &&
-      Math.random() < profile.aggression * (strength > 0.88 ? 0.9 : 0.55)
-    ) {
-      const desired = state.currentBet + Math.max(
-        state.minRaise,
-        Math.round(pot * (0.38 + profile.aggression * 0.5) / 5) * 5
-      );
-      return { type: 'raise', amount: clamp(desired, range.min, range.max) };
-    }
-
-    const continueScore = strength + profile.looseness * 0.18 - pressure * 0.58 - stackPressure * 0.18;
-    if (continueScore > 0.2 || callAmount >= player.chips || (strength > 0.52 && pressure < 0.32)) {
-      return { type: 'call' };
-    }
-    return { type: 'fold' };
+    const opponents = activePlayers().filter((opponent) => opponent.id !== player.id).length;
+    const effectiveStack = activePlayers()
+      .filter((opponent) => opponent.id !== player.id)
+      .reduce((maximum, opponent) => Math.max(maximum, Math.min(player.chips, opponent.chips)), 0);
+    return HoldemAI.decide({
+      holeCards: player.hand,
+      community: state.community,
+      opponents: Math.max(1, opponents),
+      phase: state.phase,
+      callAmount,
+      pot,
+      currentBet: state.currentBet,
+      raiseMin: range.min,
+      raiseMax: range.max,
+      canRaise: range.canRaise,
+      position: positionScore(player.id),
+      spr: effectiveStack / Math.max(1, pot),
+      previousRaises: state.streetRaises,
+      difficulty: state.settings.difficulty,
+      profile: BOT_PROFILES[player.id]
+    });
   }
 
   async function performAction(type, amount) {
     const index = state.currentPlayer;
-    if (index === null || state.handComplete) return;
+    if (index === null || state.handComplete || state.animating) return;
     const player = state.players[index];
     const callAmount = Math.max(0, state.currentBet - player.roundBet);
     const token = state.handToken;
@@ -393,8 +413,14 @@
     player.acted = true;
 
     if (type === 'fold') {
+      state.animating = true;
+      setDealerStatus(player.name + ' 弃牌，收牌', 'speaking');
+      render();
+      await animateFoldCards(player, token);
+      if (token !== state.handToken) return;
       player.folded = true;
       player.lastAction = '弃牌';
+      state.animating = false;
       addLog(player.name + ' 弃牌', 'fold');
       if (player.isHuman) {
         state.stats.actions += 1;
@@ -415,6 +441,7 @@
       if (player.roundBet > previousBet) {
         const raiseSize = player.roundBet - previousBet;
         state.currentBet = player.roundBet;
+        state.streetRaises += 1;
         if (raiseSize >= state.minRaise) state.minRaise = raiseSize;
         state.players.forEach((other) => {
           if (other.id !== player.id && other.inHand && !other.folded && !other.allIn) other.acted = false;
@@ -480,11 +507,11 @@
       if (player.inHand && !player.folded && !player.allIn) player.lastAction = '';
     });
     state.currentBet = 0;
+    state.streetRaises = 0;
     state.minRaise = state.bigBlind;
-    dealNextStreet();
-    render();
-    playSound('deal');
-    await wait(520);
+    const dealt = await dealNextStreet(token);
+    if (!dealt) return;
+    await wait(240);
     if (token !== state.handToken || state.handComplete) return;
 
     const actionable = activePlayers().filter((player) => !player.allIn);
@@ -498,46 +525,77 @@
     else setCurrentPlayer(next);
   }
 
-  function dealNextStreet() {
-    state.deck.pop();
+  async function dealNextStreet(token) {
+    if (token !== state.handToken || state.handComplete) return false;
+    state.currentPlayer = null;
+    state.animating = true;
+    render();
+
+    const burnCard = state.deck.pop();
+    setDealerStatus('烧牌', 'speaking');
+    await animateBurnCard(burnCard, token);
+    if (token !== state.handToken || state.handComplete) return false;
+
+    let cardCount = 0;
     if (state.phase === 'preflop') {
       state.phase = 'flop';
-      state.community.push(state.deck.pop(), state.deck.pop(), state.deck.pop());
+      cardCount = 3;
     } else if (state.phase === 'flop') {
       state.phase = 'turn';
-      state.community.push(state.deck.pop());
+      cardCount = 1;
     } else if (state.phase === 'turn') {
       state.phase = 'river';
-      state.community.push(state.deck.pop());
+      cardCount = 1;
+    } else {
+      state.animating = false;
+      return false;
     }
+
+    setDealerStatus(PHASE_NAMES[state.phase] + '，请看牌', 'speaking');
+    render();
+    for (let dealt = 0; dealt < cardCount; dealt += 1) {
+      const card = state.deck.pop();
+      const animated = await animateCommunityCard(card, state.community.length, token);
+      if (!animated || token !== state.handToken) return false;
+      playSound('deal');
+      await wait(55);
+    }
+
     addLog(PHASE_NAMES[state.phase] + '：' + state.community.map(Poker.cardText).join(' '), 'phase');
     rotateTip();
+    state.animating = false;
+    setDealerStatus(PHASE_NAMES[state.phase] + '已发出，请行动');
+    render();
+    return true;
   }
 
   async function runoutBoard(token) {
     state.currentPlayer = null;
     render();
     while (state.phase !== 'river') {
-      await wait(650);
+      await wait(420);
       if (token !== state.handToken || state.handComplete) return;
       state.players.forEach((player) => {
         player.roundBet = 0;
         player.acted = true;
       });
       state.currentBet = 0;
-      dealNextStreet();
-      render();
-      playSound('deal');
+      const dealt = await dealNextStreet(token);
+      if (!dealt) return;
     }
-    await wait(700);
+    await wait(520);
     if (token === state.handToken && !state.handComplete) showdown();
   }
 
   function showdown() {
+    const token = state.handToken;
     state.currentPlayer = null;
+    state.animating = false;
     state.handComplete = true;
+    state.resultReady = true;
     state.revealCards = true;
     state.phase = 'showdown';
+    setDealerStatus('摊牌，请亮牌', 'speaking');
     state.lastPot = potAmount();
     state.awards = {};
     const pots = Poker.buildSidePots(state.players);
@@ -570,10 +628,13 @@
     });
 
     state.winnerIds = Object.keys(state.awards).map(Number);
+    const announcement = state.winnerIds.map((id) => state.players[id].name).join('、') + ' 赢得底池';
     recordCompletedHand(Boolean(state.awards[0]), state.lastPot);
     render();
     playSound(state.awards[0] ? 'win' : 'lose');
-    window.setTimeout(showHandResult, 850);
+    window.setTimeout(() => {
+      if (token === state.handToken && state.handComplete) setDealerStatus(announcement, 'winner');
+    }, 320);
   }
 
   function orderFromDealer(players) {
@@ -586,18 +647,20 @@
 
   function settleUncontested(winner) {
     state.currentPlayer = null;
+    state.animating = false;
     state.handComplete = true;
+    state.resultReady = true;
     state.revealCards = false;
     state.lastPot = potAmount();
     winner.chips += state.lastPot;
     state.awards = { [winner.id]: state.lastPot };
     state.winnerIds = [winner.id];
     winner.lastAction = '赢得 ' + state.lastPot;
+    setDealerStatus(winner.name + ' 赢得底池', 'winner');
     addLog(winner.name + ' 赢得无人争夺的底池 ' + state.lastPot, 'win');
     recordCompletedHand(winner.id === 0, state.lastPot);
     render();
     playSound(winner.id === 0 ? 'win' : 'lose');
-    window.setTimeout(showHandResult, 700);
   }
 
   function recordCompletedHand(humanWon, pot) {
@@ -644,6 +707,7 @@
 
   function showSessionEnd() {
     state.sessionOver = true;
+    setDealerStatus('本局结束');
     const alive = state.players.filter((player) => player.chips > 0);
     const humanChampion = alive.length === 1 && alive[0].id === 0;
     dom['result-eyebrow'].textContent = humanChampion ? '牌桌冠军' : '本局结束';
@@ -665,6 +729,7 @@
     if (!state.players.length) return;
     dom['hand-number'].textContent = '#' + Math.max(1, state.handNumber);
     dom['blind-level'].textContent = state.smallBlind + ' / ' + state.bigBlind;
+    dom['difficulty-label'].textContent = HoldemAI.DIFFICULTIES[state.settings.difficulty].label;
     const profit = state.players[0].chips - state.sessionStart;
     dom['session-profit'].textContent = (profit > 0 ? '+' : profit < 0 ? '' : '±') + profit.toLocaleString('zh-CN');
     dom['session-profit'].style.color = profit < 0 ? '#dc8f8f' : '';
@@ -687,8 +752,8 @@
   function renderPlayer(player) {
     const seat = dom['seat-' + player.id];
     const visible = player.isHuman || (state.revealCards && !player.folded);
-    const cards = player.inHand
-      ? player.hand.map((card) => cardHtml(card, !visible)).join('')
+    const cards = player.inHand && !player.folded
+      ? player.hand.slice(0, player.visibleCardCount).map((card) => cardHtml(card, !visible)).join('')
       : '';
     const panelClasses = ['player-panel'];
     if (state.currentPlayer === player.id) panelClasses.push('active');
@@ -727,6 +792,18 @@
     return '';
   }
 
+  function positionScore(id) {
+    const seats = [];
+    let cursor = state.dealer;
+    const activeCount = state.players.filter((player) => player.inHand && !player.folded).length;
+    for (let offset = 0; offset < activeCount; offset += 1) {
+      cursor = nextPlayerIndex(cursor, (player) => player.inHand && !player.folded);
+      if (cursor >= 0) seats.push(cursor);
+    }
+    const index = seats.indexOf(id);
+    return index < 0 || seats.length <= 1 ? 0.5 : index / (seats.length - 1);
+  }
+
   function playerStatus(player) {
     if (!player.inHand) return '<span class="state-badge fold">出局</span>';
     if (player.folded) return '<span class="state-badge fold">弃牌</span>';
@@ -749,16 +826,240 @@
     '</div>';
   }
 
+  function setDealerStatus(message, tone) {
+    if (!dom['dealer-status'] || !dom['dealer-station']) return;
+    dom['dealer-status'].textContent = message;
+    dom['dealer-station'].classList.toggle('is-speaking', tone === 'speaking');
+    dom['dealer-station'].classList.toggle('winner', tone === 'winner');
+  }
+
+  function clearAnimationLayer() {
+    if (dom['card-animation-layer']) dom['card-animation-layer'].replaceChildren();
+  }
+
+  function clearMuck() {
+    if (dom['muck-card-stack']) dom['muck-card-stack'].replaceChildren();
+  }
+
+  function addMuckCards(count) {
+    if (!dom['muck-card-stack']) return;
+    for (let index = 0; index < count; index += 1) {
+      if (dom['muck-card-stack'].children.length >= 8) {
+        dom['muck-card-stack'].firstElementChild.remove();
+      }
+      const card = document.createElement('i');
+      card.className = 'muck-card';
+      dom['muck-card-stack'].appendChild(card);
+    }
+  }
+
+  function createFlyingCard(card, hidden) {
+    const holder = document.createElement('div');
+    holder.innerHTML = cardHtml(card, hidden);
+    const element = holder.firstElementChild;
+    element.classList.add('flying-card');
+    return element;
+  }
+
+  function createFlyingFlip(card) {
+    const shell = document.createElement('div');
+    shell.className = 'flying-flip';
+    const inner = document.createElement('div');
+    inner.className = 'flying-flip-inner';
+
+    const backHolder = document.createElement('div');
+    backHolder.innerHTML = cardHtml(card, true);
+    const back = backHolder.firstElementChild;
+    back.classList.add('flight-back');
+
+    const frontHolder = document.createElement('div');
+    frontHolder.innerHTML = cardHtml(card, false);
+    const front = frontHolder.firstElementChild;
+    front.classList.add('flight-front');
+
+    inner.append(back, front);
+    shell.appendChild(inner);
+    return { shell, inner };
+  }
+
+  async function animateElement(element, keyframes, options) {
+    const reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const duration = reducedMotion ? Math.min(90, options.duration) : options.duration;
+    if (!element.animate) {
+      await wait(duration);
+      return;
+    }
+    try {
+      const animation = element.animate(keyframes, Object.assign({}, options, { duration }));
+      await animation.finished;
+    } catch (error) {
+      // Starting a new hand intentionally cancels any animation from the previous hand.
+    }
+  }
+
+  async function flyElement(element, sourceRect, target, options) {
+    const layer = dom['card-animation-layer'];
+    const tableRect = dom['poker-table'].getBoundingClientRect();
+    const startX = sourceRect.left + sourceRect.width / 2;
+    const startY = sourceRect.top + sourceRect.height / 2;
+    const startScale = options.startScale || Math.max(0.55, sourceRect.width / 58);
+    const endScale = options.endScale || Math.max(0.45, target.width / 58);
+    const dx = target.x - startX;
+    const dy = target.y - startY;
+    const rotation = options.rotation || 0;
+    const lift = options.lift === undefined ? -14 : options.lift;
+
+    element.style.left = (startX - tableRect.left - 29) + 'px';
+    element.style.top = (startY - tableRect.top - 41) + 'px';
+    layer.appendChild(element);
+
+    await animateElement(element, [
+      { opacity: 0.98, transform: 'translate3d(0, 0, 0) scale(' + startScale + ') rotate(-5deg)' },
+      { offset: 0.56, opacity: 1, transform: 'translate3d(' + (dx * 0.58) + 'px, ' + (dy * 0.58 + lift) + 'px, 0) scale(' + ((startScale + endScale) / 2) + ') rotate(' + (rotation * 0.45) + 'deg)' },
+      { opacity: 1, transform: 'translate3d(' + dx + 'px, ' + dy + 'px, 0) scale(' + endScale + ') rotate(' + rotation + 'deg)' }
+    ], {
+      duration: options.duration || 250,
+      easing: 'cubic-bezier(0.2, 0.82, 0.28, 1)',
+      fill: 'forwards'
+    });
+  }
+
+  async function animateCardToSeat(player, cardIndex, token) {
+    const seat = dom['seat-' + player.id];
+    const cardArea = seat && seat.querySelector('.seat-cards');
+    if (!seat || !cardArea || !dom['dealer-deck']) {
+      player.visibleCardCount = player.hand.length;
+      renderPlayer(player);
+      return;
+    }
+
+    const sourceRect = dom['dealer-deck'].getBoundingClientRect();
+    const seatRect = seat.getBoundingClientRect();
+    const cardAreaRect = cardArea.getBoundingClientRect();
+    const flight = createFlyingCard(player.hand[cardIndex], true);
+    await flyElement(flight, sourceRect, {
+      x: seatRect.left + seatRect.width / 2 + (cardIndex === 0 ? -8 : 8),
+      y: cardAreaRect.bottom - 27,
+      width: 39
+    }, {
+      duration: 225,
+      endScale: 39 / 58,
+      rotation: cardIndex === 0 ? -4 : 5,
+      lift: -17
+    });
+
+    if (token === state.handToken) {
+      player.visibleCardCount = Math.max(player.visibleCardCount, cardIndex + 1);
+      renderPlayer(player);
+      await wait(16);
+    }
+    flight.remove();
+  }
+
+  async function animateBurnCard(card, token) {
+    if (!card || !dom['dealer-deck'] || !dom['muck-area']) return false;
+    const sourceRect = dom['dealer-deck'].getBoundingClientRect();
+    const muckRect = dom['muck-area'].getBoundingClientRect();
+    const flight = createFlyingCard(card, true);
+    await flyElement(flight, sourceRect, {
+      x: muckRect.left + muckRect.width / 2,
+      y: muckRect.top + muckRect.height / 2 - 4,
+      width: 29
+    }, {
+      duration: 235,
+      endScale: 0.5,
+      rotation: 17,
+      lift: -10
+    });
+    if (token === state.handToken) addMuckCards(1);
+    flight.remove();
+    return token === state.handToken;
+  }
+
+  async function animateCommunityCard(card, targetIndex, token) {
+    const targetCard = dom['community-cards'] && dom['community-cards'].children[targetIndex];
+    if (!card || !targetCard || !dom['dealer-deck']) return false;
+    const sourceRect = dom['dealer-deck'].getBoundingClientRect();
+    const targetRect = targetCard.getBoundingClientRect();
+    const flight = createFlyingFlip(card);
+
+    await flyElement(flight.shell, sourceRect, {
+      x: targetRect.left + targetRect.width / 2,
+      y: targetRect.top + targetRect.height / 2,
+      width: targetRect.width
+    }, {
+      duration: 255,
+      endScale: 1,
+      rotation: targetIndex % 2 === 0 ? -1 : 1,
+      lift: -13
+    });
+    if (token !== state.handToken) {
+      flight.shell.remove();
+      return false;
+    }
+
+    await animateElement(flight.inner, [
+      { transform: 'rotateY(0deg)' },
+      { transform: 'rotateY(180deg)' }
+    ], {
+      duration: 215,
+      easing: 'cubic-bezier(0.4, 0, 0.2, 1)',
+      fill: 'forwards'
+    });
+    if (token !== state.handToken) {
+      flight.shell.remove();
+      return false;
+    }
+
+    state.community.push(card);
+    renderCommunity();
+    await wait(16);
+    flight.shell.remove();
+    return true;
+  }
+
+  async function animateFoldCards(player, token) {
+    const seat = dom['seat-' + player.id];
+    const sourceCards = seat ? Array.from(seat.querySelectorAll('.seat-cards .card')) : [];
+    if (!sourceCards.length || !dom['muck-area']) return;
+    const muckRect = dom['muck-area'].getBoundingClientRect();
+
+    await Promise.all(sourceCards.map(async (sourceCard, index) => {
+      const flight = createFlyingCard(player.hand[index], !player.isHuman);
+      await flyElement(flight, sourceCard.getBoundingClientRect(), {
+        x: muckRect.left + muckRect.width / 2 + (index === 0 ? -5 : 5),
+        y: muckRect.top + muckRect.height / 2 - 4 + index * 2,
+        width: 28
+      }, {
+        duration: 285 + index * 45,
+        startScale: sourceCard.getBoundingClientRect().width / 58,
+        endScale: 0.48,
+        rotation: index === 0 ? -15 : 12,
+        lift: -20 - index * 4
+      });
+      flight.remove();
+    }));
+
+    if (token === state.handToken) addMuckCards(Math.min(2, sourceCards.length));
+  }
+
   function renderActions() {
     const player = state.players[0];
-    const isTurn = state.currentPlayer === 0 && !state.handComplete;
+    const isTurn = state.currentPlayer === 0 && !state.handComplete && !state.animating;
+    const canReview = state.handComplete && state.resultReady;
     const callAmount = Math.max(0, state.currentBet - player.roundBet);
     const range = legalRaiseRange(player);
 
-    dom['action-panel'].classList.toggle('disabled', !isTurn);
+    dom['action-panel'].classList.toggle('disabled', !isTurn && !canReview);
+    dom['action-panel'].classList.toggle('review-ready', canReview);
     dom['fold-button'].disabled = !isTurn;
     dom['check-call-button'].disabled = !isTurn;
     dom['raise-button'].disabled = !isTurn || !range.canRaise;
+    dom['fold-button'].hidden = canReview;
+    dom['check-call-button'].hidden = canReview;
+    dom['raise-button'].hidden = canReview;
+    dom['show-result-button'].hidden = !canReview;
+    dom['show-result-button'].disabled = !canReview;
     dom['bet-control'].classList.toggle('disabled', !isTurn || !range.canRaise);
     dom['bet-control'].querySelectorAll('button').forEach((button) => {
       button.disabled = !isTurn || !range.canRaise;
@@ -769,9 +1070,14 @@
       dom['turn-detail'].textContent = callAmount > 0
         ? '跟注需 ' + Math.min(callAmount, player.chips) + ' · 当前底池 ' + potAmount()
         : '可以过牌或主动下注 · 当前底池 ' + potAmount();
+    } else if (state.animating) {
+      dom['turn-title'].textContent = state.phase === 'dealing' ? '荷官正在发底牌' : '荷官正在处理牌面';
+      dom['turn-detail'].textContent = dom['dealer-status'].textContent || '请稍候';
     } else if (state.handComplete) {
-      dom['turn-title'].textContent = '本手已经结束';
-      dom['turn-detail'].textContent = '查看结果后开始下一手';
+      dom['turn-title'].textContent = state.resultReady ? '本手结束，牌面已保留' : '本手已经结束';
+      dom['turn-detail'].textContent = state.revealCards
+        ? '看清对手底牌后，再点击“查看本手结算”'
+        : '确认牌桌情况后，再查看本手结算';
     } else if (state.currentPlayer !== null) {
       dom['turn-title'].textContent = state.players[state.currentPlayer].name + ' 正在思考';
       dom['turn-detail'].textContent = '电脑玩家正在分析牌面与底池';
@@ -870,8 +1176,28 @@
     });
     document.querySelectorAll('.modal-backdrop').forEach((backdrop) => {
       backdrop.addEventListener('click', (event) => {
-        if (event.target === backdrop && backdrop.id !== 'result-modal') closeModal(backdrop.id);
+        if (
+          event.target === backdrop &&
+          backdrop.id !== 'result-modal' &&
+          backdrop.id !== 'difficulty-modal'
+        ) closeModal(backdrop.id);
       });
+    });
+
+    document.querySelectorAll('.difficulty-option').forEach((button) => {
+      button.addEventListener('click', () => selectDifficulty(button.dataset.difficulty));
+    });
+    dom['start-game-button'].addEventListener('click', () => {
+      closeModal('difficulty-modal');
+      saveSettings();
+      startHand();
+      window.setTimeout(() => showToast('当前难度：' + HoldemAI.DIFFICULTIES[state.settings.difficulty].label), 500);
+    });
+    dom['difficulty-select'].addEventListener('change', (event) => {
+      state.settings.difficulty = event.target.value;
+      saveSettings();
+      render();
+      showToast('难度已改为“' + HoldemAI.DIFFICULTIES[state.settings.difficulty].label + '”，电脑下一次行动起生效');
     });
 
     dom['speed-select'].addEventListener('change', (event) => {
@@ -894,6 +1220,9 @@
       if (state.sessionOver) resetGame();
       else startHand();
     });
+    dom['show-result-button'].addEventListener('click', () => {
+      if (state.resultReady) showHandResult();
+    });
 
     document.querySelectorAll('.side-tab').forEach((tab) => {
       tab.addEventListener('click', () => switchSideTab(tab.dataset.tab));
@@ -901,11 +1230,28 @@
 
     document.addEventListener('keydown', (event) => {
       if (event.target.matches('input, select') || document.querySelector('.modal-backdrop.open')) return;
-      if (state.currentPlayer !== 0 || state.handComplete) return;
+      if (state.resultReady && event.key === 'Enter') {
+        dom['show-result-button'].click();
+        return;
+      }
+      if (state.currentPlayer !== 0 || state.handComplete || state.animating) return;
       if (event.key.toLowerCase() === 'f') dom['fold-button'].click();
       if (event.key.toLowerCase() === 'c') dom['check-call-button'].click();
       if (event.key.toLowerCase() === 'r') dom['raise-button'].click();
     });
+  }
+
+  function selectDifficulty(difficulty) {
+    if (!HoldemAI.DIFFICULTIES[difficulty]) return;
+    state.settings.difficulty = difficulty;
+    dom['difficulty-select'].value = difficulty;
+    document.querySelectorAll('.difficulty-option').forEach((button) => {
+      const selected = button.dataset.difficulty === difficulty;
+      button.classList.toggle('selected', selected);
+      button.setAttribute('aria-checked', selected ? 'true' : 'false');
+    });
+    dom['start-game-button'].textContent = '以' + HoldemAI.DIFFICULTIES[difficulty].label + '难度开始牌局';
+    render();
   }
 
   function setRaiseTarget(value) {
@@ -1045,6 +1391,7 @@
     cacheDom();
     bindEvents();
     state.players = makePlayers();
+    dom['difficulty-select'].value = state.settings.difficulty;
     dom['speed-select'].value = state.settings.speed;
     dom['confirm-allin'].checked = state.settings.confirmAllin;
     dom['sound-toggle'].checked = state.settings.sound;
@@ -1059,8 +1406,8 @@
     }
     render();
     addLog('牌桌已准备就绪。祝你好运。', 'phase');
-    startHand();
-    window.setTimeout(() => showToast('快捷键：F 弃牌 · C 跟注/过牌 · R 加注'), 1200);
+    selectDifficulty(state.settings.difficulty);
+    openModal('difficulty-modal');
   }
 
   document.addEventListener('DOMContentLoaded', initialize);
