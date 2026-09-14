@@ -13,6 +13,7 @@
     <link rel="apple-touch-icon" sizes="180x180" href="assets/icon-180.png" />
     <title>德州扑克单机版</title>
     <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="mobile.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -123,10 +124,10 @@
                 <button data-bet="allin">全下</button>
               </div>
               <div class="range-row">
-                <input type="range" id="raise-slider" min="20" max="2000" value="40" />
+                <input type="range" id="raise-slider" min="20" max="2000" value="40" aria-label="加注金额" />
                 <label class="raise-amount">
                   <span>加注至</span>
-                  <input type="number" id="raise-input" value="40" min="20" />
+                  <input type="number" id="raise-input" value="40" min="20" inputmode="numeric" aria-label="加注至" />
                 </label>
               </div>
             </div>
@@ -213,6 +214,8 @@
         </div>
         <button class="modal-primary" id="start-game-button">以一般难度开始牌局</button>
         <p class="difficulty-note">之后可随时在右上角设置中调整。</p>
+        <button class="modal-secondary" id="install-from-start" hidden>安装到手机，离线玩</button>
+        <p class="offline-summary" id="offline-summary" role="status" hidden></p>
       </section>
     </div>
 
@@ -258,6 +261,8 @@
           <label class="switch"><input type="checkbox" id="sound-toggle" checked /><i></i></label>
         </div>
         <button class="modal-secondary" id="restart-button">重新开始整局</button>
+        <button class="modal-secondary" id="install-from-settings" hidden>安装与离线状态</button>
+        <p class="version-line" id="save-status">牌局会自动保存在这台设备上</p>
         <p class="version-line" id="version-line">德州扑克单机版</p>
       </section>
     </div>
@@ -286,9 +291,34 @@
       </section>
     </div>
 
+    <div class="modal-backdrop install-backdrop" id="install-modal" aria-hidden="true">
+      <section class="modal install-card" role="dialog" aria-modal="true" aria-labelledby="install-title" tabindex="-1">
+        <div class="modal-header">
+          <div><p class="eyebrow">随时开一局</p><h2 id="install-title">安装到 iPhone</h2></div>
+          <button class="close-button" id="close-install" aria-label="关闭安装说明">×</button>
+        </div>
+        <div class="install-app">
+          <img src="assets/icon-180.png" width="64" height="64" alt="德州扑克图标" />
+          <div><strong>德州扑克单机版</strong><p>主屏幕启动 · 自动续局 · 离线对战</p></div>
+        </div>
+        <p class="install-intro" id="install-intro">用 Safari 添加到主屏幕，即可像 App 一样打开。</p>
+        <ol class="install-steps" id="install-steps">
+          <li>在 <strong>Safari</strong> 中打开本页，点工具栏的<strong>分享</strong>按钮（方框向上箭头）。</li>
+          <li>向下找到<strong>添加到主屏幕</strong>，点<strong>添加</strong>。如果出现“作为网页 App 打开”，请保持开启。</li>
+          <li>从主屏幕打开“德州扑克”，首次保持联网，看到<strong>已可离线游玩</strong>后就能断网玩。</li>
+        </ol>
+        <p class="offline-status" id="offline-status" role="status" aria-live="polite" data-state="loading">正在准备离线内容…</p>
+        <button class="modal-secondary" id="retry-offline" hidden>重新准备离线内容</button>
+        <button class="modal-primary" id="update-app" hidden>保存进度并更新</button>
+        <a class="install-address" id="install-address" href="https://promisemofan.github.io/Texas/">打开正式安装网址</a>
+        <p class="install-note">无需 App Store 或苹果开发者账号。请使用普通浏览模式；清除网站数据会同时清除牌局存档。</p>
+      </section>
+    </div>
+
     <script src="src/poker-engine.js"></script>
     <script src="src/mccfr-policy.js"></script>
     <script src="src/ai-engine.js"></script>
+    <script src="src/session-store.js"></script>
     <script src="renderer.js"></script>
     <script src="pwa.js"></script>
   </body>

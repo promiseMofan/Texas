@@ -3,6 +3,7 @@
 
   const Poker = window.PokerEngine;
   const HoldemAI = window.HoldemAI;
+  const Session = window.HoldemSession;
   const STARTING_CHIPS = 2000;
   const PHASES = ['preflop', 'flop', 'turn', 'river'];
   const PHASE_NAMES = {
@@ -29,6 +30,8 @@
 
   const dom = {};
   let audioContext = null;
+  let storageWarningShown = false;
+  let sessionSaved = true;
 
   const state = {
     players: [],
@@ -75,7 +78,7 @@
       'difficulty-select', 'speed-select', 'confirm-allin', 'sound-toggle', 'restart-button',
       'start-game-button', 'version-line', 'toast-region', 'poker-table', 'dealer-station',
       'dealer-status', 'dealer-deck', 'muck-area', 'muck-card-stack', 'card-animation-layer',
-      'show-result-button'
+      'show-result-button', 'save-status'
     ];
     ids.forEach((id) => { dom[id] = document.getElementById(id); });
     for (let index = 0; index < 4; index += 1) {
@@ -88,7 +91,7 @@
       const stored = JSON.parse(localStorage.getItem('holdem-settings') || '{}');
       return {
         difficulty: ['easy', 'normal', 'hard'].includes(stored.difficulty) ? stored.difficulty : 'normal',
-        speed: stored.speed || 'normal',
+        speed: ['fast', 'normal', 'slow'].includes(stored.speed) ? stored.speed : 'normal',
         confirmAllin: stored.confirmAllin !== false,
         sound: stored.sound !== false
       };
@@ -98,7 +101,7 @@
   }
 
   function saveSettings() {
-    localStorage.setItem('holdem-settings', JSON.stringify(state.settings));
+    saveLocalValue('holdem-settings', JSON.stringify(state.settings));
   }
 
   function loadStats() {
@@ -111,7 +114,66 @@
   }
 
   function saveStats() {
-    localStorage.setItem('holdem-stats', JSON.stringify(state.stats));
+    saveLocalValue('holdem-stats', JSON.stringify(state.stats));
+  }
+
+  function saveLocalValue(key, value) {
+    try {
+      localStorage.setItem(key, value);
+      return true;
+    } catch (error) {
+      if (dom['save-status']) dom['save-status'].textContent = '当前浏览器无法保存进度，请使用普通浏览模式并留出存储空间';
+      if (!storageWarningShown && dom['toast-region']) {
+        storageWarningShown = true;
+        showToast('暂时无法保存进度，仍可继续本次游戏');
+      }
+      return false;
+    }
+  }
+
+  function saveSession(resume) {
+    const history = Array.from(dom['history-list'].children).map((entry) => ({
+      message: entry.querySelector('strong').textContent,
+      type: entry.dataset.type || '',
+      time: entry.querySelector('time').textContent
+    }));
+    sessionSaved = saveLocalValue(Session.KEY, Session.serialize(state, resume, history));
+  }
+
+  function saveStableSession() {
+    if (!state.handNumber || state.animating) return;
+    if (state.handComplete && state.resultReady) saveSession({ type: 'result' });
+    else if (state.currentPlayer !== null) saveSession({ type: 'turn' });
+  }
+
+  function restoreSession() {
+    let saved;
+    try { saved = Session.parse(localStorage.getItem(Session.KEY)); } catch (error) { return false; }
+    if (!saved) return false;
+    const players = makePlayers().map((player, index) => Object.assign(player, saved.state.players[index]));
+    Object.assign(state, saved.state, { players, stats: saved.stats, animating: false });
+    state.handToken += 1;
+    state.turnToken += 1;
+    clearHistory();
+    saved.history.slice().reverse().forEach((entry) => addLog(entry.message, entry.type, entry.time));
+    clearAnimationLayer();
+    clearMuck();
+    addMuckCards(state.players.filter((player) => player.folded).length * 2);
+    render();
+    showToast('已恢复上次牌局');
+    if (saved.resume.type === 'deal') {
+      state.animating = true;
+      finishDealing(state.handToken);
+    } else if (saved.resume.type === 'after-action') {
+      continueAfterAction(saved.resume.player, state.handToken);
+    } else if (saved.resume.type === 'turn') {
+      const player = state.players[state.currentPlayer];
+      setDealerStatus(player.isHuman ? '轮到你，请行动' : player.name + ' 思考中');
+      if (!player.isHuman) runBotTurn(player.id, state.handToken, state.turnToken);
+    } else {
+      setDealerStatus('本手已结算，可以查看结果', 'winner');
+    }
+    return true;
   }
 
   function makePlayers() {
@@ -201,6 +263,7 @@
   }
 
   async function startHand() {
+    if (state.animating || !state.handComplete) return;
     closeModal('result-modal');
     state.handToken += 1;
     state.turnToken += 1;
@@ -270,7 +333,13 @@
     );
     rotateTip();
     render();
+    saveSession({ type: 'deal' });
+    await finishDealing(token);
+  }
+
+  async function finishDealing(token) {
     setDealerStatus('洗牌中…', 'speaking');
+    render();
     await wait(360);
     if (token !== state.handToken) return;
 
@@ -350,6 +419,7 @@
     state.turnToken += 1;
     setDealerStatus(state.players[index].isHuman ? '轮到你，请行动' : state.players[index].name + ' 思考中');
     render();
+    saveSession({ type: 'turn' });
     if (!state.players[index].isHuman) runBotTurn(index, state.handToken, state.turnToken);
   }
 
@@ -475,7 +545,12 @@
 
     saveStats();
     render();
+    saveSession({ type: 'after-action', player: index });
     await wait(420);
+    continueAfterAction(index, token);
+  }
+
+  function continueAfterAction(index, token) {
     if (token !== state.handToken || state.handComplete) return;
 
     const contenders = activePlayers();
@@ -630,6 +705,7 @@
     state.winnerIds = Object.keys(state.awards).map(Number);
     const announcement = state.winnerIds.map((id) => state.players[id].name).join('、') + ' 赢得底池';
     recordCompletedHand(Boolean(state.awards[0]), state.lastPot);
+    saveSession({ type: 'result' });
     render();
     playSound(state.awards[0] ? 'win' : 'lose');
     window.setTimeout(() => {
@@ -659,6 +735,7 @@
     setDealerStatus(winner.name + ' 赢得底池', 'winner');
     addLog(winner.name + ' 赢得无人争夺的底池 ' + state.lastPot, 'win');
     recordCompletedHand(winner.id === 0, state.lastPot);
+    saveSession({ type: 'result' });
     render();
     playSound(winner.id === 0 ? 'win' : 'lose');
   }
@@ -1064,6 +1141,8 @@
     dom['bet-control'].querySelectorAll('button').forEach((button) => {
       button.disabled = !isTurn || !range.canRaise;
     });
+    dom['raise-slider'].disabled = !isTurn || !range.canRaise;
+    dom['raise-input'].disabled = !isTurn || !range.canRaise;
 
     if (isTurn) {
       dom['turn-title'].textContent = '轮到你了';
@@ -1148,6 +1227,28 @@
   }
 
   function bindEvents() {
+    // iOS requires the audio context to be created/resumed inside a user gesture.
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
+    document.addEventListener('keydown', unlockAudio);
+    window.addEventListener('resize', () => {
+      const layer = dom['card-animation-layer'];
+      if (!layer.getAnimations) return;
+      // Finish flights using old coordinates before continuing in the rotated layout.
+      layer.getAnimations({ subtree: true }).forEach((animation) => {
+        try { animation.finish(); } catch (error) { /* Cancelled by a new hand. */ }
+      });
+    });
+    window.addEventListener('pagehide', saveStableSession);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        saveStableSession();
+        if (audioContext && audioContext.state === 'running') audioContext.suspend().catch(() => {});
+      }
+    });
+    window.addEventListener('holdem:before-update', (event) => {
+      saveStableSession();
+      if (!sessionSaved) event.preventDefault();
+    });
     dom['fold-button'].addEventListener('click', () => performAction('fold'));
     dom['check-call-button'].addEventListener('click', () => {
       const human = state.players[0];
@@ -1259,6 +1360,7 @@
     const range = legalRaiseRange(state.players[0]);
     state.raiseTarget = clamp(Math.round(value || range.min), range.min, range.max);
     renderActions();
+    saveStableSession();
   }
 
   function setBetPreset(preset) {
@@ -1295,14 +1397,15 @@
     dom['tip-text'].textContent = tip[1];
   }
 
-  function addLog(message, type) {
+  function addLog(message, type, savedTime) {
     if (!dom['history-list']) return;
     const entry = document.createElement('div');
     entry.className = 'history-entry ' + (type || '');
+    entry.dataset.type = type || '';
     const copy = document.createElement('strong');
     copy.textContent = message;
     const time = document.createElement('time');
-    time.textContent = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+    time.textContent = savedTime || new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
     entry.append(copy, time);
     dom['history-list'].prepend(entry);
     while (dom['history-list'].children.length > 80) dom['history-list'].lastElementChild.remove();
@@ -1343,7 +1446,7 @@
   function playSound(type) {
     if (!state.settings.sound) return;
     try {
-      audioContext = audioContext || new (window.AudioContext || window.webkitAudioContext)();
+      if (!audioContext || audioContext.state !== 'running') return;
       const sounds = {
         deal: [[320, 0.035]],
         chips: [[520, 0.045], [660, 0.035]],
@@ -1368,6 +1471,18 @@
       });
     } catch (error) {
       // Audio is optional and may be blocked before the first user gesture.
+    }
+  }
+
+  function unlockAudio() {
+    if (!state.settings.sound) return;
+    try {
+      const Audio = window.AudioContext || window.webkitAudioContext;
+      if (!Audio) return;
+      if (!audioContext || audioContext.state === 'closed') audioContext = new Audio();
+      if (audioContext.state !== 'running') audioContext.resume().catch(() => {});
+    } catch (error) {
+      // Sound is optional; denied audio access must never block a hand.
     }
   }
 
@@ -1404,9 +1519,10 @@
         dom['version-line'].textContent = '德州扑克单机版 · 完全离线';
       }
     }
+    selectDifficulty(state.settings.difficulty);
+    if (restoreSession()) return;
     render();
     addLog('牌桌已准备就绪。祝你好运。', 'phase');
-    selectDifficulty(state.settings.difficulty);
     openModal('difficulty-modal');
   }
 

@@ -5,7 +5,10 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const root = path.resolve(__dirname, '..');
+const rootArgIndex = process.argv.indexOf('--dir');
+const root = rootArgIndex >= 0
+  ? path.resolve(process.argv[rootArgIndex + 1])
+  : path.resolve(__dirname, '..');
 const portArgIndex = process.argv.indexOf('--port');
 const port = Number(portArgIndex >= 0 ? process.argv[portArgIndex + 1] : 4173) || 4173;
 const host = process.argv.includes('--localhost') ? '127.0.0.1' : '0.0.0.0';
@@ -21,7 +24,8 @@ const MIME_TYPES = {
 };
 
 function safePath(requestUrl) {
-  const pathname = decodeURIComponent((requestUrl || '/').split('?')[0]);
+  let pathname;
+  try { pathname = decodeURIComponent((requestUrl || '/').split('?')[0]); } catch (error) { return null; }
   const relative = pathname === '/' ? 'index.html' : pathname.replace(/^\/+/, '');
   const resolved = path.resolve(root, relative);
   return resolved.startsWith(root + path.sep) || resolved === root ? resolved : null;
@@ -59,6 +63,7 @@ const server = http.createServer((request, response) => {
 
 server.listen(port, host, () => {
   console.log(`手机测试服务已启动：http://localhost:${port}`);
+  console.log('正式安装请使用 HTTPS；局域网 HTTP 地址仅用于界面预览。');
   if (host !== '127.0.0.1') {
     for (const [interfaceName, interfaces] of Object.entries(os.networkInterfaces())) {
       for (const network of interfaces || []) {
